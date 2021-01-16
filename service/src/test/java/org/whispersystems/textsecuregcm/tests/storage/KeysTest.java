@@ -1,5 +1,6 @@
 package org.whispersystems.textsecuregcm.tests.storage;
 
+import com.google.common.base.Throwables;
 import com.opentable.db.postgres.embedded.LiquibasePreparer;
 import com.opentable.db.postgres.junit.EmbeddedPostgresRules;
 import com.opentable.db.postgres.junit.PreparedDbRule;
@@ -22,8 +23,10 @@ import org.whispersystems.textsecuregcm.storage.Keys;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Optional;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreakerOpenException;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
@@ -243,11 +246,15 @@ public class KeysTest {
     assertThat(keys.getCount("+14152222222", 2)).isEqualTo(100);
 
     List<Thread> threads = new LinkedList<>();
+    AtomicReference<Optional<Throwable>> threadException = new AtomicReference(Optional.empty());
 
     for (int i=0;i<20;i++) {
       Thread thread = new Thread(() -> {
         List<KeyRecord> results = keys.get("+14152222222");
         assertThat(results.size()).isEqualTo(2);
+      });
+      thread.setUncaughtExceptionHandler((Thread t, Throwable e) -> {
+        threadException.set(Optional.of(e));
       });
       thread.start();
       threads.add(thread);
@@ -256,6 +263,10 @@ public class KeysTest {
     for (Thread thread : threads) {
       thread.join();
     }
+    threadException.get().ifPresent(e -> {
+      Throwables.throwIfUnchecked(e);
+      throw new RuntimeException(e);
+    });
 
     assertThat(keys.getCount("+14152222222", 1)).isEqualTo(80);
     assertThat(keys.getCount("+14152222222",2)).isEqualTo(80);
